@@ -1,117 +1,77 @@
-// trip.js
+// Trip Organizer Module
 class TripOrganizer {
     constructor(supabase) {
+        console.log('TripOrganizer initialized');
         this.supabase = supabase;
-        this.currentUser = null;
         this.currentTrip = null;
-        this.subscribers = new Map();
         
-        // Initialize DOM element references
-        this.domElements = {
-            tripList: null,
-            tripDetails: null,
-            newTripBtn: null,
-            newTripForm: null,
-            newTripModal: null,
-            cancelNewTrip: null,
-            loadingIndicator: null
-        };
+        // Initialize event handler properties
+        this.handleNewTripClick = null;
+        this.handleFormSubmit = null;
+        this.handleCancel = null;
 
-        // Bind methods
-        Object.getOwnPropertyNames(TripOrganizer.prototype)
-            .filter(prop => typeof this[prop] === 'function')
-            .forEach(method => {
-                this[method] = this[method].bind(this);
-            });
+        // Bind methods to ensure correct 'this' context
+        this.loadTripDetails = this.loadTripDetails.bind(this);
+        this.renderTripDetails = this.renderTripDetails.bind(this);
+        this.handleNewTrip = this.handleNewTrip.bind(this);
+        this.showNewTripModal = this.showNewTripModal.bind(this);
+        this.hideNewTripModal = this.hideNewTripModal.bind(this);
     }
 
-    async init() {
-        console.log('Initializing TripOrganizer');
-        try {
-            // Get current user
-            const { data: { user }, error } = await this.supabase.auth.getUser();
-            if (error) throw error;
-            this.currentUser = user;
-
-            // Initialize DOM elements
-            this.initializeDOMElements();
-            
-            // Set up event listeners
-            this.initializeEventListeners();
-            
-            // Load initial trips
-            await this.loadTrips();
-            
-            // Set up realtime subscriptions
-            this.setupRealtimeSubscriptions();
-
-            console.log('TripOrganizer initialized successfully');
-        } catch (error) {
-            console.error('Failed to initialize TripOrganizer:', error);
-            this.showError('Failed to initialize TripOrganizer');
-        }
-    }
-
-    initializeDOMElements() {
-        this.domElements = {
-            tripList: document.getElementById('tripList'),
-            tripDetails: document.getElementById('tripDetails'),
-            newTripBtn: document.getElementById('newTripBtn'),
-            newTripForm: document.getElementById('newTripForm'),
-            newTripModal: document.getElementById('newTripModal'),
-            cancelNewTrip: document.getElementById('cancelNewTrip'),
-            loadingIndicator: document.getElementById('loadingIndicator')
-        };
-
-        if (!this.validateDOMElements()) {
-            throw new Error('Required DOM elements not found');
-        }
-    }
-
-    validateDOMElements() {
-        const requiredElements = ['tripList', 'tripDetails', 'newTripBtn', 'newTripForm', 'newTripModal', 'cancelNewTrip'];
-        return requiredElements.every(elementId => {
-            if (!this.domElements[elementId]) {
-                console.error(`Required DOM element not found: ${elementId}`);
-                return false;
-            }
-            return true;
-        });
+    init() {
+        console.log('Running TripOrganizer init');
+        this.tripListContainer = document.getElementById('tripList');
+        this.tripDetailsContainer = document.getElementById('tripDetails');
+        this.initializeEventListeners();
+        this.loadTrips();
     }
 
     initializeEventListeners() {
         console.log('Setting up event listeners');
         
-        // Remove any existing event listeners
+        // Remove any existing event listeners first
         this.removeEventListeners();
         
-        // New Trip button
-        this.domElements.newTripBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            this.showNewTripModal();
-        });
+        const newTripBtn = document.getElementById('newTripBtn');
+        if (newTripBtn) {
+            console.log('New Trip button found');
+            this.handleNewTripClick = (e) => {
+                console.log('New Trip button clicked');
+                e.preventDefault();
+                this.showNewTripModal();
+            };
+            newTripBtn.addEventListener('click', this.handleNewTripClick);
+        }
 
-        // New Trip form
-        this.domElements.newTripForm.addEventListener('submit', (e) => this.handleNewTrip(e));
+        const newTripForm = document.getElementById('newTripForm');
+        if (newTripForm) {
+            console.log('New Trip form found');
+            this.handleFormSubmit = (e) => this.handleNewTrip(e);
+            newTripForm.addEventListener('submit', this.handleFormSubmit);
+        }
 
-        // Cancel button
-        this.domElements.cancelNewTrip.addEventListener('click', () => this.hideNewTripModal());
+        const cancelBtn = document.getElementById('cancelNewTrip');
+        if (cancelBtn) {
+            this.handleCancel = () => this.hideNewTripModal();
+            cancelBtn.addEventListener('click', this.handleCancel);
+        }
     }
 
     removeEventListeners() {
-        // Clean up any existing event listeners if needed
-        this.domElements.newTripBtn?.removeEventListener('click', this.showNewTripModal);
-        this.domElements.newTripForm?.removeEventListener('submit', this.handleNewTrip);
-        this.domElements.cancelNewTrip?.removeEventListener('click', this.hideNewTripModal);
-    }
+        const newTripBtn = document.getElementById('newTripBtn');
+        if (newTripBtn && this.handleNewTripClick) {
+            newTripBtn.removeEventListener('click', this.handleNewTripClick);
+        }
 
-    setupRealtimeSubscriptions() {
-        this.supabase
-            .channel('trips_channel')
-            .on('postgres_changes', 
-                { event: '*', schema: 'public', table: 'trips' },
-                (payload) => this.handleTripChange(payload))
-            .subscribe();
+        const newTripForm = document.getElementById('newTripForm');
+        if (newTripForm && this.handleFormSubmit) {
+            newTripForm.removeEventListener('submit', this.handleFormSubmit);
+        }
+
+        const cancelBtn = document.getElementById('cancelNewTrip');
+        if (cancelBtn && this.handleCancel) {
+            cancelBtn.removeEventListener('click', this.handleCancel);
+        }
     }
 
     async loadTrips() {
@@ -119,18 +79,14 @@ class TripOrganizer {
         try {
             const { data: trips, error } = await this.supabase
                 .from('trips')
-                .select(`
-                    *,
-                    trip_members!inner (
-                        user_id,
-                        role
-                    )
-                `)
-                .eq('trip_members.user_id', this.currentUser.id)
+                .select('*')
                 .order('start_date', { ascending: true });
 
-            if (error) throw error;
-            
+            if (error) {
+                console.error('Error fetching trips:', error);
+                return;
+            }
+
             console.log('Trips loaded:', trips?.length || 0);
             this.renderTripList(trips || []);
         } catch (error) {
@@ -144,22 +100,17 @@ class TripOrganizer {
         try {
             const { data: trip, error } = await this.supabase
                 .from('trips')
-                .select(`
-                    *,
-                    trip_members (
-                        user_id,
-                        role,
-                        profiles:user_id (
-                            full_name,
-                            avatar_url
-                        )
-                    )
-                `)
+                .select('*')
                 .eq('id', tripId)
                 .single();
 
-            if (error) throw error;
+            if (error) {
+                console.error('Error loading trip details:', error);
+                this.showError('Failed to load trip details');
+                return;
+            }
 
+            console.log('Trip details loaded:', trip);
             this.currentTrip = trip;
             this.renderTripDetails(trip);
         } catch (error) {
@@ -171,38 +122,40 @@ class TripOrganizer {
     async createTrip(tripData) {
         console.log('Creating new trip:', tripData);
         try {
-            // Validate trip data
-            this.validateTripData(tripData);
+            const { data: { user }, error: userError } = await this.supabase.auth.getUser();
+            
+            if (userError) {
+                console.error('Error getting user:', userError);
+                return null;
+            }
 
-            // Insert trip record
-            const { data: trip, error: tripError } = await this.supabase
+            if (!user) {
+                console.error('No user found');
+                return null;
+            }
+
+            const { data, error } = await this.supabase
                 .from('trips')
                 .insert({
-                    user_id: this.currentUser.id,
+                    user_id: user.id,
                     title: tripData.title,
                     description: tripData.description,
-                    location: tripData.location,
                     start_date: tripData.startDate,
                     end_date: tripData.endDate,
+                    location: tripData.location,
+                    created_at: new Date()
                 })
                 .select()
                 .single();
 
-            if (tripError) throw tripError;
+            if (error) {
+                console.error('Error inserting trip:', error);
+                return null;
+            }
 
-            // Create trip member record for creator
-            const { error: memberError } = await this.supabase
-                .from('trip_members')
-                .insert({
-                    trip_id: trip.id,
-                    user_id: this.currentUser.id,
-                    role: 'owner'
-                });
-
-            if (memberError) throw memberError;
-
+            console.log('Trip created successfully:', data);
             await this.loadTrips();
-            return trip;
+            return data;
         } catch (error) {
             console.error('Error in createTrip:', error);
             this.showError('Failed to create trip');
@@ -210,37 +163,18 @@ class TripOrganizer {
         }
     }
 
-    async deleteTrip(tripId) {
-        if (!confirm('Are you sure you want to delete this trip? This action cannot be undone.')) {
-            return;
+    showNewTripModal() {
+        console.log('Showing modal');
+        const modal = document.getElementById('newTripModal');
+        if (modal) {
+            modal.style.display = 'flex';
         }
+    }
 
-        try {
-            // Verify user has permission to delete
-            const { data: member } = await this.supabase
-                .from('trip_members')
-                .select('role')
-                .eq('trip_id', tripId)
-                .eq('user_id', this.currentUser.id)
-                .single();
-
-            if (!member || member.role !== 'owner') {
-                throw new Error('Only trip owners can delete trips');
-            }
-
-            const { error } = await this.supabase
-                .from('trips')
-                .delete()
-                .eq('id', tripId);
-
-            if (error) throw error;
-
-            this.currentTrip = null;
-            this.domElements.tripDetails.innerHTML = '<p>Select a trip to view details</p>';
-            await this.loadTrips();
-        } catch (error) {
-            console.error('Error in deleteTrip:', error);
-            this.showError('Failed to delete trip');
+    hideNewTripModal() {
+        const modal = document.getElementById('newTripModal');
+        if (modal) {
+            modal.style.display = 'none';
         }
     }
 
@@ -256,6 +190,7 @@ class TripOrganizer {
             description: document.getElementById('tripDescription').value
         };
 
+        console.log('Trip data:', tripData);
         const newTrip = await this.createTrip(tripData);
         
         if (newTrip) {
@@ -264,36 +199,19 @@ class TripOrganizer {
         }
     }
 
-    validateTripData({ title, startDate, endDate }) {
-        if (!title?.trim()) {
-            throw new Error('Title is required');
-        }
-
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-
-        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-            throw new Error('Invalid date format');
-        }
-
-        if (start > end) {
-            throw new Error('End date must be after start date');
-        }
-    }
-
     renderTripList(trips) {
         console.log('Rendering trip list');
-        if (!this.domElements.tripList) {
+        if (!this.tripListContainer) {
             console.error('Trip list container not found');
             return;
         }
 
         if (trips.length === 0) {
-            this.domElements.tripList.innerHTML = '<p>No trips yet. Create your first trip!</p>';
+            this.tripListContainer.innerHTML = '<p>No trips yet. Create your first trip!</p>';
             return;
         }
 
-        this.domElements.tripList.innerHTML = trips.map(trip => `
+        this.tripListContainer.innerHTML = trips.map(trip => `
             <div class="trip-card" data-trip-id="${trip.id}">
                 <h3>${trip.title}</h3>
                 <p>${trip.location || 'No location set'}</p>
@@ -302,10 +220,11 @@ class TripOrganizer {
             </div>
         `).join('');
 
-        // Add click events for trip cards
+        // Add click events with proper binding
         document.querySelectorAll('.trip-card').forEach(card => {
             card.addEventListener('click', () => {
                 const tripId = card.dataset.tripId;
+                console.log('Trip card clicked:', tripId);
                 this.loadTripDetails(tripId);
             });
         });
@@ -313,20 +232,17 @@ class TripOrganizer {
 
     renderTripDetails(trip) {
         console.log('Rendering trip details:', trip);
-        if (!this.domElements.tripDetails) {
+        if (!this.tripDetailsContainer) {
             console.error('Trip details container not found');
             return;
         }
 
         if (!trip) {
-            this.domElements.tripDetails.innerHTML = '<p>Select a trip to view details</p>';
+            this.tripDetailsContainer.innerHTML = '<p>Select a trip to view details</p>';
             return;
         }
 
-        const userRole = trip.trip_members.find(m => m.user_id === this.currentUser.id)?.role;
-        const canEdit = userRole === 'owner' || userRole === 'editor';
-
-        this.domElements.tripDetails.innerHTML = `
+        this.tripDetailsContainer.innerHTML = `
             <div class="trip-details">
                 <h2>${trip.title}</h2>
                 <p class="location">📍 ${trip.location || 'No location set'}</p>
@@ -338,45 +254,55 @@ class TripOrganizer {
                     <h3>Description</h3>
                     <p>${trip.description || 'No description available'}</p>
                 </div>
-                ${canEdit ? `
-                    <div class="trip-actions">
-                        <button class="btn btn-secondary" id="editTrip">Edit Trip</button>
-                        ${userRole === 'owner' ? `
-                            <button class="btn btn-error" id="deleteTrip">Delete Trip</button>
-                        ` : ''}
-                    </div>
-                ` : ''}
+                <div class="trip-actions">
+                    <button class="btn btn-secondary" id="editTrip">Edit Trip</button>
+                    <button class="btn btn-error" id="deleteTrip">Delete Trip</button>
+                </div>
             </div>
         `;
 
         // Add event listeners for the action buttons
-        if (canEdit) {
-            const editBtn = document.getElementById('editTrip');
-            if (editBtn) {
-                editBtn.addEventListener('click', () => this.editTrip(trip.id));
-            }
+        const editBtn = document.getElementById('editTrip');
+        const deleteBtn = document.getElementById('deleteTrip');
 
-            if (userRole === 'owner') {
-                const deleteBtn = document.getElementById('deleteTrip');
-                if (deleteBtn) {
-                    deleteBtn.addEventListener('click', () => this.deleteTrip(trip.id));
-                }
-            }
+        if (editBtn) {
+            editBtn.addEventListener('click', () => this.editTrip(trip.id));
+        }
+
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', () => this.deleteTrip(trip.id));
         }
     }
 
-    showNewTripModal() {
-        console.log('Showing modal');
-        this.domElements.newTripModal.style.display = 'flex';
+    async editTrip(tripId) {
+        console.log('Edit trip:', tripId);
+        // TODO: Implement edit functionality
     }
 
-    hideNewTripModal() {
-        this.domElements.newTripModal.style.display = 'none';
-    }
+    async deleteTrip(tripId) {
+        console.log('Deleting trip:', tripId);
+        if (confirm('Are you sure you want to delete this trip?')) {
+            try {
+                const { error } = await this.supabase
+                    .from('trips')
+                    .delete()
+                    .eq('id', tripId);
 
-    handleTripChange(payload) {
-        console.log('Trip changes detected:', payload);
-        this.loadTrips();
+                if (error) {
+                    console.error('Error deleting trip:', error);
+                    this.showError('Failed to delete trip');
+                    return;
+                }
+
+                // Clear current trip and reload list
+                this.currentTrip = null;
+                this.tripDetailsContainer.innerHTML = '<p>Select a trip to view details</p>';
+                await this.loadTrips();
+            } catch (error) {
+                console.error('Error in deleteTrip:', error);
+                this.showError('Failed to delete trip');
+            }
+        }
     }
 
     showError(message) {
