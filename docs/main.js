@@ -97,37 +97,48 @@ class App {
         });
     }
 
-    async handleAuth(e) {
-        e.preventDefault();
-        const email = document.getElementById('email').value;
+async handleAuth(e) {
+    e.preventDefault();
+    const email = document.getElementById('email').value;
 
-        try {
-            // Get the current URL dynamically
-            const currentHost = window.location.hostname; // e.g., "192.168.64.2"
-            const currentPort = window.location.port; // e.g., "3000"
-            const currentProtocol = window.location.protocol; // e.g., "http:"
-            const redirectUrl = `${currentProtocol}//${currentHost}:${currentPort}`;
-            
-            console.log('Redirect URL:', redirectUrl);
-
-            const { error } = await this.supabase.auth.signInWithOtp({
-                email: email,
-                options: {
-                    emailRedirectTo: redirectUrl
-                }
-            });
-
-            if (error) throw error;
-
-            // Show magic link message with more details
-            this.showMessage(`Magic link sent! Check your email (${email}). 
-                            The link will redirect to: ${redirectUrl}`);
-            
-        } catch (error) {
-            console.error('Authentication error:', error);
-            this.showError('Authentication error: ' + error.message);
+    try {
+        // Get the current URL components
+        const currentHost = window.location.hostname;
+        const currentPort = window.location.port;
+        const currentProtocol = window.location.protocol;
+        const currentPath = window.location.pathname;
+        
+        // Construct the base URL
+        let redirectUrl = `${currentProtocol}//${currentHost}`;
+        
+        // Only add port if it's specified (not default 80/443)
+        if (currentPort) {
+            redirectUrl += `:${currentPort}`;
         }
+        
+        // Add the path
+        redirectUrl += currentPath;
+        
+        console.log('Constructed redirect URL:', redirectUrl);
+
+        const { error } = await this.supabase.auth.signInWithOtp({
+            email: email,
+            options: {
+                emailRedirectTo: redirectUrl
+            }
+        });
+
+        if (error) throw error;
+
+        // Show magic link message with more details
+        this.showMessage(`Magic link sent! Check your email (${email}). 
+                        The link will redirect to: ${redirectUrl}`);
+        
+    } catch (error) {
+        console.error('Authentication error:', error);
+        this.showError('Authentication error: ' + error.message);
     }
+}
 
     loadApp(appId) {
         console.log('Loading app:', appId);
