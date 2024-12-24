@@ -1,108 +1,148 @@
 // trip.js
-class TripManager {
+class TripOrganizer {
     constructor(supabase) {
         this.supabase = supabase;
         this.currentUser = null;
         this.currentTrip = null;
         this.subscribers = new Map();
         
+        // Initialize DOM element references
+        this.domElements = {
+            tripList: null,
+            tripDetails: null,
+            newTripBtn: null,
+            newTripForm: null,
+            newTripModal: null,
+            cancelNewTrip: null,
+            loadingIndicator: null
+        };
+
         // Bind methods
-        Object.getOwnPropertyNames(TripManager.prototype)
+        Object.getOwnPropertyNames(TripOrganizer.prototype)
             .filter(prop => typeof this[prop] === 'function')
             .forEach(method => {
                 this[method] = this[method].bind(this);
             });
     }
 
-    async initialize() {
+    async init() {
+        console.log('Initializing TripOrganizer');
         try {
+            // Get current user
             const { data: { user }, error } = await this.supabase.auth.getUser();
             if (error) throw error;
             this.currentUser = user;
 
-            // Set up real-time subscriptions
+            // Initialize DOM elements
+            this.initializeDOMElements();
+            
+            // Set up event listeners
+            this.initializeEventListeners();
+            
+            // Load initial trips
+            await this.loadTrips();
+            
+            // Set up realtime subscriptions
             this.setupRealtimeSubscriptions();
-            return true;
+
+            console.log('TripOrganizer initialized successfully');
         } catch (error) {
-            console.error('Initialization failed:', error);
-            return false;
+            console.error('Failed to initialize TripOrganizer:', error);
+            this.showError('Failed to initialize TripOrganizer');
         }
     }
 
+    initializeDOMElements() {
+        this.domElements = {
+            tripList: document.getElementById('tripList'),
+            tripDetails: document.getElementById('tripDetails'),
+            newTripBtn: document.getElementById('newTripBtn'),
+            newTripForm: document.getElementById('newTripForm'),
+            newTripModal: document.getElementById('newTripModal'),
+            cancelNewTrip: document.getElementById('cancelNewTrip'),
+            loadingIndicator: document.getElementById('loadingIndicator')
+        };
+
+        if (!this.validateDOMElements()) {
+            throw new Error('Required DOM elements not found');
+        }
+    }
+
+    validateDOMElements() {
+        const requiredElements = ['tripList', 'tripDetails', 'newTripBtn', 'newTripForm', 'newTripModal', 'cancelNewTrip'];
+        return requiredElements.every(elementId => {
+            if (!this.domElements[elementId]) {
+                console.error(`Required DOM element not found: ${elementId}`);
+                return false;
+            }
+            return true;
+        });
+    }
+
+    initializeEventListeners() {
+        console.log('Setting up event listeners');
+        
+        // Remove any existing event listeners
+        this.removeEventListeners();
+        
+        // New Trip button
+        this.domElements.newTripBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.showNewTripModal();
+        });
+
+        // New Trip form
+        this.domElements.newTripForm.addEventListener('submit', (e) => this.handleNewTrip(e));
+
+        // Cancel button
+        this.domElements.cancelNewTrip.addEventListener('click', () => this.hideNewTripModal());
+    }
+
+    removeEventListeners() {
+        // Clean up any existing event listeners if needed
+        this.domElements.newTripBtn?.removeEventListener('click', this.showNewTripModal);
+        this.domElements.newTripForm?.removeEventListener('submit', this.handleNewTrip);
+        this.domElements.cancelNewTrip?.removeEventListener('click', this.hideNewTripModal);
+    }
+
     setupRealtimeSubscriptions() {
-        // Subscribe to trip changes
         this.supabase
             .channel('trips_channel')
             .on('postgres_changes', 
                 { event: '*', schema: 'public', table: 'trips' },
-                this.handleTripChange)
-            .on('postgres_changes',
-                { event: '*', schema: 'public', table: 'trip_members' },
-                this.handleMemberChange)
-            .on('postgres_changes',
-                { event: '*', schema: 'public', table: 'trip_expenses' },
-                this.handleExpenseChange)
+                (payload) => this.handleTripChange(payload))
             .subscribe();
     }
 
-    // Trip CRUD Operations
-    async createTrip({ title, description, location, startDate, endDate, budgetAmount, budgetCurrency = 'USD' }) {
+    async loadTrips() {
+        console.log('Loading trips');
         try {
-            this.validateTripData({ title, startDate, endDate });
-
-            const { data: trip, error } = await this.supabase
+            const { data: trips, error } = await this.supabase
                 .from('trips')
-                .insert({
-                    user_id: this.currentUser.id,
-                    title,
-                    description,
-                    location,
-                    start_date: startDate,
-                    end_date: endDate,
-                    budget_amount: budgetAmount,
-                    budget_currency: budgetCurrency,
-                    status: 'planning'
-                })
-                .select()
-                .single();
+                .select(`
+                    *,
+                    trip_members!inner (
+                        user_id,
+                        role
+                    )
+                `)
+                .eq('trip_members.user_id', this.currentUser.id)
+                .order('start_date', { ascending: true });
 
             if (error) throw error;
-
-            // Create initial member record for creator
-            await this.addTripMember(trip.id, this.currentUser.id, 'owner');
-
-            return trip;
+            
+            console.log('Trips loaded:', trips?.length || 0);
+            this.renderTripList(trips || []);
         } catch (error) {
-            throw this.handleError('Failed to create trip', error);
+            console.error('Error loading trips:', error);
+            this.showError('Failed to load trips');
         }
     }
 
-    async getTripsByUser(userId = this.currentUser?.id) {
+    async loadTripDetails(tripId) {
+        console.log('Loading details for trip:', tripId);
         try {
-            const { data: memberTrips, error: memberError } = await this.supabase
-                .from('trip_members')
-                .select(`
-                    trip_id,
-                    role,
-                    trips (*)
-                `)
-                .eq('user_id', userId);
-
-            if (memberError) throw memberError;
-
-            return memberTrips.map(mt => ({
-                ...mt.trips,
-                userRole: mt.role
-            }));
-        } catch (error) {
-            throw this.handleError('Failed to fetch trips', error);
-        }
-    }
-
-    async getTripDetails(tripId) {
-        try {
-            // Fetch trip details with members and expenses
-            const { data: trip, error: tripError } = await this.supabase
+            const { data: trip, error } = await this.supabase
                 .from('trips')
                 .select(`
                     *,
@@ -113,51 +153,70 @@ class TripManager {
                             full_name,
                             avatar_url
                         )
-                    ),
-                    trip_expenses (
-                        *
                     )
                 `)
                 .eq('id', tripId)
                 .single();
 
-            if (tripError) throw tripError;
+            if (error) throw error;
 
-            // Calculate total expenses
-            const totalExpenses = trip.trip_expenses.reduce((sum, expense) => {
-                // Note: In a production app, you'd want to handle currency conversion
-                return sum + Number(expense.amount);
-            }, 0);
-
-            return {
-                ...trip,
-                totalExpenses,
-                remainingBudget: trip.budget_amount ? trip.budget_amount - totalExpenses : null
-            };
+            this.currentTrip = trip;
+            this.renderTripDetails(trip);
         } catch (error) {
-            throw this.handleError('Failed to fetch trip details', error);
+            console.error('Error in loadTripDetails:', error);
+            this.showError('Failed to load trip details');
         }
     }
 
-    async updateTrip(tripId, updates) {
+    async createTrip(tripData) {
+        console.log('Creating new trip:', tripData);
         try {
-            const { data: trip, error } = await this.supabase
+            // Validate trip data
+            this.validateTripData(tripData);
+
+            // Insert trip record
+            const { data: trip, error: tripError } = await this.supabase
                 .from('trips')
-                .update(updates)
-                .eq('id', tripId)
+                .insert({
+                    user_id: this.currentUser.id,
+                    title: tripData.title,
+                    description: tripData.description,
+                    location: tripData.location,
+                    start_date: tripData.startDate,
+                    end_date: tripData.endDate,
+                })
                 .select()
                 .single();
 
-            if (error) throw error;
+            if (tripError) throw tripError;
+
+            // Create trip member record for creator
+            const { error: memberError } = await this.supabase
+                .from('trip_members')
+                .insert({
+                    trip_id: trip.id,
+                    user_id: this.currentUser.id,
+                    role: 'owner'
+                });
+
+            if (memberError) throw memberError;
+
+            await this.loadTrips();
             return trip;
         } catch (error) {
-            throw this.handleError('Failed to update trip', error);
+            console.error('Error in createTrip:', error);
+            this.showError('Failed to create trip');
+            return null;
         }
     }
 
     async deleteTrip(tripId) {
+        if (!confirm('Are you sure you want to delete this trip? This action cannot be undone.')) {
+            return;
+        }
+
         try {
-            // Check user's role
+            // Verify user has permission to delete
             const { data: member } = await this.supabase
                 .from('trip_members')
                 .select('role')
@@ -165,7 +224,7 @@ class TripManager {
                 .eq('user_id', this.currentUser.id)
                 .single();
 
-            if (member?.role !== 'owner') {
+            if (!member || member.role !== 'owner') {
                 throw new Error('Only trip owners can delete trips');
             }
 
@@ -175,187 +234,36 @@ class TripManager {
                 .eq('id', tripId);
 
             if (error) throw error;
-            return true;
+
+            this.currentTrip = null;
+            this.domElements.tripDetails.innerHTML = '<p>Select a trip to view details</p>';
+            await this.loadTrips();
         } catch (error) {
-            throw this.handleError('Failed to delete trip', error);
+            console.error('Error in deleteTrip:', error);
+            this.showError('Failed to delete trip');
         }
     }
 
-    // Member Management
-    async addTripMember(tripId, userId, role = 'viewer') {
-        try {
-            const { data, error } = await this.supabase
-                .from('trip_members')
-                .insert({
-                    trip_id: tripId,
-                    user_id: userId,
-                    role
-                })
-                .select()
-                .single();
+    async handleNewTrip(e) {
+        e.preventDefault();
+        console.log('Handling new trip submission');
 
-            if (error) throw error;
-            return data;
-        } catch (error) {
-            throw this.handleError('Failed to add trip member', error);
+        const tripData = {
+            title: document.getElementById('tripTitle').value,
+            location: document.getElementById('tripLocation').value,
+            startDate: document.getElementById('tripStartDate').value,
+            endDate: document.getElementById('tripEndDate').value,
+            description: document.getElementById('tripDescription').value
+        };
+
+        const newTrip = await this.createTrip(tripData);
+        
+        if (newTrip) {
+            this.hideNewTripModal();
+            document.getElementById('newTripForm').reset();
         }
     }
 
-    async updateMemberRole(tripId, userId, newRole) {
-        try {
-            const { data, error } = await this.supabase
-                .from('trip_members')
-                .update({ role: newRole })
-                .eq('trip_id', tripId)
-                .eq('user_id', userId)
-                .select()
-                .single();
-
-            if (error) throw error;
-            return data;
-        } catch (error) {
-            throw this.handleError('Failed to update member role', error);
-        }
-    }
-
-    async removeTripMember(tripId, userId) {
-        try {
-            const { error } = await this.supabase
-                .from('trip_members')
-                .delete()
-                .eq('trip_id', tripId)
-                .eq('user_id', userId);
-
-            if (error) throw error;
-            return true;
-        } catch (error) {
-            throw this.handleError('Failed to remove trip member', error);
-        }
-    }
-
-    // Expense Management
-    async addExpense(tripId, { amount, currency = 'USD', category, description, date, receiptFile }) {
-        try {
-            let receiptUrl = null;
-
-            // Upload receipt if provided
-            if (receiptFile) {
-                const { data: uploadData, error: uploadError } = await this.supabase.storage
-                    .from('trip-documents')
-                    .upload(
-                        `receipts/${tripId}/${Date.now()}_${receiptFile.name}`,
-                        receiptFile
-                    );
-
-                if (uploadError) throw uploadError;
-                receiptUrl = uploadData.path;
-            }
-
-            const { data: expense, error } = await this.supabase
-                .from('trip_expenses')
-                .insert({
-                    trip_id: tripId,
-                    user_id: this.currentUser.id,
-                    amount,
-                    currency,
-                    category,
-                    description,
-                    date,
-                    receipt_url: receiptUrl
-                })
-                .select()
-                .single();
-
-            if (error) throw error;
-            return expense;
-        } catch (error) {
-            throw this.handleError('Failed to add expense', error);
-        }
-    }
-
-    // File Management
-    async uploadTripFile(tripId, file) {
-        try {
-            const filePath = `trips/${tripId}/${Date.now()}_${file.name}`;
-            
-            const { data: uploadData, error: uploadError } = await this.supabase.storage
-                .from('trip-documents')
-                .upload(filePath, file);
-
-            if (uploadError) throw uploadError;
-
-            // Get the public URL
-            const { data: { publicUrl } } = this.supabase.storage
-                .from('trip-documents')
-                .getPublicUrl(filePath);
-
-            // Update trip's files array
-            const { data: trip } = await this.supabase
-                .from('trips')
-                .select('files')
-                .eq('id', tripId)
-                .single();
-
-            const updatedFiles = [
-                ...trip.files,
-                {
-                    name: file.name,
-                    path: filePath,
-                    url: publicUrl,
-                    uploaded_at: new Date().toISOString(),
-                    uploaded_by: this.currentUser.id
-                }
-            ];
-
-            const { error: updateError } = await this.supabase
-                .from('trips')
-                .update({ files: updatedFiles })
-                .eq('id', tripId);
-
-            if (updateError) throw updateError;
-
-            return {
-                name: file.name,
-                path: filePath,
-                url: publicUrl
-            };
-        } catch (error) {
-            throw this.handleError('Failed to upload file', error);
-        }
-    }
-
-    async deleteTripFile(tripId, filePath) {
-        try {
-            // Delete from storage
-            const { error: deleteError } = await this.supabase.storage
-                .from('trip-documents')
-                .remove([filePath]);
-
-            if (deleteError) throw deleteError;
-
-            // Update trip's files array
-            const { data: trip } = await this.supabase
-                .from('trips')
-                .select('files')
-                .eq('id', tripId)
-                .single();
-
-            const updatedFiles = trip.files.filter(f => f.path !== filePath);
-
-            const { error: updateError } = await this.supabase
-                .from('trips')
-                .update({ files: updatedFiles })
-                .eq('id', tripId);
-
-            if (updateError) throw updateError;
-
-            return true;
-        } catch (error) {
-            throw this.handleError('Failed to delete file', error);
-        }
-    }
-
-    // Utility Methods
     validateTripData({ title, startDate, endDate }) {
         if (!title?.trim()) {
             throw new Error('Title is required');
@@ -371,45 +279,114 @@ class TripManager {
         if (start > end) {
             throw new Error('End date must be after start date');
         }
-
-        // if (start < new Date()) {
-        //     throw new Error('Start date cannot be in the past');
-        // }
     }
 
-    handleError(message, error) {
-        console.error(message, error);
-        const errorMessage = error?.message || 'An unexpected error occurred';
-        return new Error(`${message}: ${errorMessage}`);
-    }
-
-    // Event Handlers
-    handleTripChange = (payload) => {
-        this.notifySubscribers('trip', payload);
-    }
-
-    handleMemberChange = (payload) => {
-        this.notifySubscribers('member', payload);
-    }
-
-    handleExpenseChange = (payload) => {
-        this.notifySubscribers('expense', payload);
-    }
-
-    // Subscription Management
-    subscribe(event, callback) {
-        if (!this.subscribers.has(event)) {
-            this.subscribers.set(event, new Set());
+    renderTripList(trips) {
+        console.log('Rendering trip list');
+        if (!this.domElements.tripList) {
+            console.error('Trip list container not found');
+            return;
         }
-        this.subscribers.get(event).add(callback);
-        return () => this.subscribers.get(event).delete(callback);
+
+        if (trips.length === 0) {
+            this.domElements.tripList.innerHTML = '<p>No trips yet. Create your first trip!</p>';
+            return;
+        }
+
+        this.domElements.tripList.innerHTML = trips.map(trip => `
+            <div class="trip-card" data-trip-id="${trip.id}">
+                <h3>${trip.title}</h3>
+                <p>${trip.location || 'No location set'}</p>
+                <p>${new Date(trip.start_date).toLocaleDateString()} - 
+                   ${new Date(trip.end_date).toLocaleDateString()}</p>
+            </div>
+        `).join('');
+
+        // Add click events for trip cards
+        document.querySelectorAll('.trip-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const tripId = card.dataset.tripId;
+                this.loadTripDetails(tripId);
+            });
+        });
     }
 
-    notifySubscribers(event, payload) {
-        if (this.subscribers.has(event)) {
-            this.subscribers.get(event).forEach(callback => callback(payload));
+    renderTripDetails(trip) {
+        console.log('Rendering trip details:', trip);
+        if (!this.domElements.tripDetails) {
+            console.error('Trip details container not found');
+            return;
         }
+
+        if (!trip) {
+            this.domElements.tripDetails.innerHTML = '<p>Select a trip to view details</p>';
+            return;
+        }
+
+        const userRole = trip.trip_members.find(m => m.user_id === this.currentUser.id)?.role;
+        const canEdit = userRole === 'owner' || userRole === 'editor';
+
+        this.domElements.tripDetails.innerHTML = `
+            <div class="trip-details">
+                <h2>${trip.title}</h2>
+                <p class="location">📍 ${trip.location || 'No location set'}</p>
+                <div class="dates">
+                    <p>🗓️ ${new Date(trip.start_date).toLocaleDateString()} - 
+                       ${new Date(trip.end_date).toLocaleDateString()}</p>
+                </div>
+                <div class="description">
+                    <h3>Description</h3>
+                    <p>${trip.description || 'No description available'}</p>
+                </div>
+                ${canEdit ? `
+                    <div class="trip-actions">
+                        <button class="btn btn-secondary" id="editTrip">Edit Trip</button>
+                        ${userRole === 'owner' ? `
+                            <button class="btn btn-error" id="deleteTrip">Delete Trip</button>
+                        ` : ''}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+
+        // Add event listeners for the action buttons
+        if (canEdit) {
+            const editBtn = document.getElementById('editTrip');
+            if (editBtn) {
+                editBtn.addEventListener('click', () => this.editTrip(trip.id));
+            }
+
+            if (userRole === 'owner') {
+                const deleteBtn = document.getElementById('deleteTrip');
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', () => this.deleteTrip(trip.id));
+                }
+            }
+        }
+    }
+
+    showNewTripModal() {
+        console.log('Showing modal');
+        this.domElements.newTripModal.style.display = 'flex';
+    }
+
+    hideNewTripModal() {
+        this.domElements.newTripModal.style.display = 'none';
+    }
+
+    handleTripChange(payload) {
+        console.log('Trip changes detected:', payload);
+        this.loadTrips();
+    }
+
+    showError(message) {
+        console.error(message);
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message';
+        errorDiv.textContent = message;
+        document.body.appendChild(errorDiv);
+        setTimeout(() => errorDiv.remove(), 5000);
     }
 }
 
-export default TripManager;
+export default TripOrganizer;
