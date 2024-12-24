@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trip Organizer</title>
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Authentication View -->
+    <div id="authView" style="display: none;">
+        <div class="auth-container">
+            <h2>Welcome to Trip Organizer</h2>
+            <form id="authForm">
+                <div class="form-group">
+                    <label for="email">Email address</label>
+                    <input 
+                        type="email" 
+                        id="email" 
+                        placeholder="Enter your email"
+                        required
+                    >
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">
+                    Send Magic Link
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Dashboard View -->
+    <div id="dashboardView" style="display: none;">
+        <div class="container">
+            <header class="dashboard-header">
+                <h1>Welcome to Your Dashboard</h1>
+                <p>Select an application to get started</p>
+            </header>
+
+            <main>
+                <div id="appsList" class="apps-grid">
+                    <!-- Apps will be dynamically inserted here -->
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- App Container -->
+    <div id="appContainer" style="display: none;">
+        <div class="container">
+            <header class="app-header">
+                <button id="backToDashboard" class="btn btn-secondary">
+                    Back to Dashboard
+                </button>
+            </header>
+
+            <!-- Trip Organizer App Structure -->
+            <div id="tripApp" style="display: none;">
+                <aside id="tripList">
+                    <div class="trip-list-header">
+                        <h2>Your Trips</h2>
+                        <button id="newTripBtn" class="btn btn-primary">
+                            New Trip
+                        </button>
+                    </div>
+                    <!-- Trip list will be dynamically inserted here -->
+                </aside>
+
+                <main id="tripDetails">
+                    <!-- Trip details will be dynamically inserted here -->
+                </main>
+
+                <!-- New Trip Modal -->
+                <div id="newTripModal" class="modal" style="display: none;">
+                    <div class="modal-content">
+                        <h3>Create New Trip</h3>
+                        <form id="newTripForm">
+                            <div class="form-group">
+                                <label for="tripTitle">Trip Title</label>
+                                <input 
+                                    type="text" 
+                                    id="tripTitle" 
+                                    required
+                                    placeholder="Enter trip title"
+                                >
+                            </div>
+                            <div class="form-group">
+                                <label for="tripLocation">Location</label>
+                                <input 
+                                    type="text" 
+                                    id="tripLocation" 
+                                    required
+                                    placeholder="Enter location"
+                                >
+                            </div>
+                            <div class="form-group">
+                                <label for="tripStartDate">Start Date</label>
+                                <input 
+                                    type="date" 
+                                    id="tripStartDate" 
+                                    required
+                                >
+                            </div>
+                            <div class="form-group">
+                                <label for="tripEndDate">End Date</label>
+                                <input 
+                                    type="date" 
+                                    id="tripEndDate" 
+                                    required
+                                >
+                            </div>
+                            <div class="form-group">
+                                <label for="tripDescription">Description</label>
+                                <textarea 
+                                    id="tripDescription" 
+                                    rows="4"
+                                    placeholder="Enter trip description"
+                                ></textarea>
+                            </div>
+                            <div class="modal-actions">
+                                <button type="button" class="btn btn-secondary" id="cancelNewTrip">
+                                    Cancel
+                                </button>
+                                <button type="submit" class="btn btn-primary">
+                                    Create Trip
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Supabase -->
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    
+    <!-- Application Scripts -->
+    <script type="module" src="main.js"></script>
+</body>
+</html>
